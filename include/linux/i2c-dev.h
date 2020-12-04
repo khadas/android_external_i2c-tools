@@ -40,12 +40,14 @@ struct i2c_msg {
 	unsigned short flags;		
 #define I2C_M_TEN	0x10	/* we have a ten bit chip address	*/
 #define I2C_M_RD	0x01
+#define I2C_RDRW_IOCTL_MAX_MSGS	42
+#define I2C_M_RECV_LEN 0x0400
 #define I2C_M_NOSTART	0x4000
 #define I2C_M_REV_DIR_ADDR	0x2000
 #define I2C_M_IGNORE_NAK	0x1000
 #define I2C_M_NO_RD_ACK		0x0800
 	short len;		/* msg length				*/
-	char *buf;		/* pointer to msg data			*/
+	__u8 * buf;		/* pointer to msg data			*/
 };
 
 /* To determine what functionality is present */
