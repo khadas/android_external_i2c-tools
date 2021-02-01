@@ -1,11 +1,11 @@
 /*
     i2cget.c - A user-space program to read an I2C register.
-    Copyright (C) 2005-2008  Jean Delvare <khali@linux-fr.org>
+    Copyright (C) 2005-2012  Jean Delvare <jdelvare@suse.de>
 
     Based on i2cset.c:
     Copyright (C) 2001-2003  Frodo Looijaard <frodol@dds.nl>, and
                              Mark D. Studebaker <mdsxyz123@yahoo.com>
-    Copyright (C) 2004-2005  Jean Delvare <khali@linux-fr.org>
+    Copyright (C) 2004-2005  Jean Delvare
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -23,6 +23,7 @@
     MA 02110-1301 USA.
 */
 
+#include <sys/ioctl.h>
 #include <errno.h>
 #include <string.h>
 #include <stdio.h>
@@ -38,9 +39,9 @@ static void help(void) __attribute__ ((noreturn));
 static void help(void)
 {
 	fprintf(stderr,
-		"Usage: i2cget [-f] [-y] I2CBUS CHIP-ADDRESS [DATA-ADDRESS [MODE]]\n"
+		"Usage: i2cget [-f] [-y] [-a] I2CBUS CHIP-ADDRESS [DATA-ADDRESS [MODE]]\n"
 		"  I2CBUS is an integer or an I2C bus name\n"
-		"  ADDRESS is an integer (0x03 - 0x77)\n"
+		"  ADDRESS is an integer (0x08 - 0x77, or 0x00 - 0x7f if -a is given)\n"
 		"  MODE is one of:\n"
 		"    b (read byte data, default)\n"
 		"    w (read word data)\n"
@@ -155,7 +156,7 @@ int main(int argc, char *argv[])
 	char filename[20];
 	int pec = 0;
 	int flags = 0;
-	int force = 0, yes = 0, version = 0;
+	int force = 0, yes = 0, version = 0, all_addrs = 0;
 
 	/* handle (optional) flags first */
 	while (1+flags < argc && argv[1+flags][0] == '-') {
@@ -163,6 +164,7 @@ int main(int argc, char *argv[])
 		case 'V': version = 1; break;
 		case 'f': force = 1; break;
 		case 'y': yes = 1; break;
+		case 'a': all_addrs = 1; break;
 		default:
 			fprintf(stderr, "Error: Unsupported option "
 				"\"%s\"!\n", argv[1+flags]);
@@ -184,7 +186,7 @@ int main(int argc, char *argv[])
 	if (i2cbus < 0)
 		help();
 
-	address = parse_i2c_address(argv[flags+2]);
+	address = parse_i2c_address(argv[flags+2], all_addrs);
 	if (address < 0)
 		help();
 
@@ -212,7 +214,7 @@ int main(int argc, char *argv[])
 		pec = argv[flags+4][1] == 'p';
 	}
 
-	file = open_i2c_dev(i2cbus, filename, 0);
+	file = open_i2c_dev(i2cbus, filename, sizeof(filename), 0);
 	if (file < 0
 	 || check_funcs(file, size, daddress, pec)
 	 || set_slave_addr(file, address, force))

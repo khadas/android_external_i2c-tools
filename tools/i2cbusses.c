@@ -4,7 +4,7 @@
                devices.
     Copyright (c) 1999-2003  Frodo Looijaard <frodol@dds.nl> and
                              Mark D. Studebaker <mdsxyz123@yahoo.com>
-    Copyright (C) 2008       Jean Delvare <khali@linux-fr.org>
+    Copyright (C) 2008-2012  Jean Delvare <jdelvare@suse.de>
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -22,12 +22,14 @@
     MA 02110-1301 USA.
 */
 
-/* For strdup */
-#define _BSD_SOURCE 1
+/* For strdup and snprintf */
+#define _BSD_SOURCE 1 /* for glibc <= 2.19 */
+#define _DEFAULT_SOURCE 1 /* for glibc >= 2.19 */
 
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/param.h>	/* for NAME_MAX */
+#include <sys/ioctl.h>
 #include <string.h>
 #include <strings.h>	/* for strcasecmp() */
 #include <stdio.h>
@@ -67,7 +69,7 @@ static enum adt i2c_get_funcs(int i2cbus)
 	char filename[20];
 	enum adt ret;
 
-	file = open_i2c_dev(i2cbus, filename, 1);
+	file = open_i2c_dev(i2cbus, filename, sizeof(filename), 1);
 	if (file < 0)
 		return adt_unknown;
 
@@ -134,7 +136,7 @@ struct i2c_adap *gather_i2c_busses(void)
 	FILE *f;
 	char fstype[NAME_MAX], sysfs[NAME_MAX], n[NAME_MAX];
 	int foundsysfs = 0;
-	int count=0;
+	int len, count = 0;
 	struct i2c_adap *adapters;
 
 	adapters = calloc(BUNCH, sizeof(struct i2c_adap));
@@ -217,18 +219,32 @@ struct i2c_adap *gather_i2c_busses(void)
 
 		/* this should work for kernels 2.6.5 or higher and */
 		/* is preferred because is unambiguous */
-		sprintf(n, "%s/%s/name", sysfs, de->d_name);
+		len = snprintf(n, NAME_MAX, "%s/%s/name", sysfs, de->d_name);
+		if (len >= NAME_MAX) {
+			fprintf(stderr, "%s: path truncated\n", n);
+			continue;
+		}
 		f = fopen(n, "r");
 		/* this seems to work for ISA */
 		if(f == NULL) {
-			sprintf(n, "%s/%s/device/name", sysfs, de->d_name);
+			len = snprintf(n, NAME_MAX, "%s/%s/device/name", sysfs,
+				       de->d_name);
+			if (len >= NAME_MAX) {
+				fprintf(stderr, "%s: path truncated\n", n);
+				continue;
+			}
 			f = fopen(n, "r");
 		}
 		/* non-ISA is much harder */
 		/* and this won't find the correct bus name if a driver
 		   has more than one bus */
 		if(f == NULL) {
-			sprintf(n, "%s/%s/device", sysfs, de->d_name);
+			len = snprintf(n, NAME_MAX, "%s/%s/device", sysfs,
+				       de->d_name);
+			if (len >= NAME_MAX) {
+				fprintf(stderr, "%s: path truncated\n", n);
+				continue;
+			}
 			if(!(ddir = opendir(n)))
 				continue;
 			while ((dde = readdir(ddir)) != NULL) {
@@ -237,8 +253,16 @@ struct i2c_adap *gather_i2c_busses(void)
 				if (!strcmp(dde->d_name, ".."))
 					continue;
 				if ((!strncmp(dde->d_name, "i2c-", 4))) {
-					sprintf(n, "%s/%s/device/%s/name",
-						sysfs, de->d_name, dde->d_name);
+					len = snprintf(n, NAME_MAX,
+						       "%s/%s/device/%s/name",
+						       sysfs, de->d_name,
+						       dde->d_name);
+					if (len >= NAME_MAX) {
+						fprintf(stderr,
+							"%s: path truncated\n",
+							n);
+						continue;
+					}
 					if((f = fopen(n, "r")))
 						goto found;
 				}
@@ -332,16 +356,16 @@ done:
  */
 int lookup_i2c_bus(const char *i2cbus_arg)
 {
-	long i2cbus;
+	unsigned long i2cbus;
 	char *end;
 
-	i2cbus = strtol(i2cbus_arg, &end, 0);
+	i2cbus = strtoul(i2cbus_arg, &end, 0);
 	if (*end || !*i2cbus_arg) {
 		/* Not a number, maybe a name? */
 		return lookup_i2c_bus_by_name(i2cbus_arg);
 	}
-	if (i2cbus < 0 || i2cbus > 0xff) {
-		fprintf(stderr, "Error: I2C bus out of range (0-255)!\n");
+	if (i2cbus > 0xFFFFF) {
+		fprintf(stderr, "Error: I2C bus out of range!\n");
 		return -2;
 	}
 
@@ -352,34 +376,50 @@ int lookup_i2c_bus(const char *i2cbus_arg)
  * Parse a CHIP-ADDRESS command line argument and return the corresponding
  * chip address, or a negative value if the address is invalid.
  */
-int parse_i2c_address(const char *address_arg)
+int parse_i2c_address(const char *address_arg, int all_addrs)
 {
 	long address;
 	char *end;
+	long min_addr = 0x08;
+	long max_addr = 0x77;
 
 	address = strtol(address_arg, &end, 0);
 	if (*end || !*address_arg) {
 		fprintf(stderr, "Error: Chip address is not a number!\n");
 		return -1;
 	}
-	if (address < 0x03 || address > 0x77) {
+
+	if (all_addrs) {
+		min_addr = 0x00;
+		max_addr = 0x7f;
+	}
+
+	if (address < min_addr || address > max_addr) {
 		fprintf(stderr, "Error: Chip address out of range "
-			"(0x03-0x77)!\n");
+			"(0x%02lx-0x%02lx)!\n", min_addr, max_addr);
 		return -2;
 	}
 
 	return address;
 }
 
-int open_i2c_dev(const int i2cbus, char *filename, const int quiet)
+int open_i2c_dev(int i2cbus, char *filename, size_t size, int quiet)
 {
-	int file;
+	int file, len;
 
-	sprintf(filename, "/dev/i2c/%d", i2cbus);
+	len = snprintf(filename, size, "/dev/i2c/%d", i2cbus);
+	if (len >= (int)size) {
+		fprintf(stderr, "%s: path truncated\n", filename);
+		return -EOVERFLOW;
+	}
 	file = open(filename, O_RDWR);
 
-	if (file < 0 && errno == ENOENT) {
-		sprintf(filename, "/dev/i2c-%d", i2cbus);
+	if (file < 0 && (errno == ENOENT || errno == ENOTDIR)) {
+		len = snprintf(filename, size, "/dev/i2c-%d", i2cbus);
+		if (len >= (int)size) {
+			fprintf(stderr, "%s: path truncated\n", filename);
+			return -EOVERFLOW;
+		}
 		file = open(filename, O_RDWR);
 	}
 

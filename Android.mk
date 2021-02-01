@@ -57,4 +57,17 @@ LOCAL_MODULE_TAGS := optional
 
 include $(BUILD_EXECUTABLE)
 
+# i2ctransfer
+include $(CLEAR_VARS)
+
+LOCAL_SRC_FILES := \
+		tools/i2ctransfer.c \
+		tools/i2cbusses.c \
+		tools/util.c
+
+LOCAL_C_INCLUDES := $(LOCAL_PATH)/include 
+LOCAL_MODULE := i2ctransfer
+LOCAL_MODULE_TAGS := optional
+
+include $(BUILD_EXECUTABLE)
 endif
